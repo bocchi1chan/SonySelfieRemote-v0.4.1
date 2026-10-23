@@ -57,6 +57,8 @@ public class MainActivity extends Activity {
     private HorizontalScrollView advancedPanel;
     private Button shutterButton;
     private EditText cameraIpEdit;
+    private View controlsOverlay, topStack, bottomStack, connectionPanel, quickControlsBar, selfieSettingsPanel, galleryPanel;
+    private TextView selfieSummaryText;
     private Network boundWifiNetwork;
     private Spinner modeSpinner, shutterSpinner, apertureSpinner, isoSpinner, evSpinner;
     private Spinner timerSpinner, burstSpinner, intervalSpinner, previewSpinner;
@@ -79,16 +81,21 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setContentView(R.layout.activity_main);
 
-        // Android 15+ 会默认把内容延伸到状态栏/导航栏下面。
-        // 给根布局应用系统安全区，避免“连接相机”按钮与状态栏重叠。
+        // Android 15+ 会默认 edge-to-edge。让取景真正铺到屏幕边缘，
+        // 只把浮动控件避开状态栏/导航栏，不再缩小实时取景本身。
         View root = findViewById(R.id.rootLayout);
-        final int basePadding = (int) (8 * getResources().getDisplayMetrics().density + 0.5f);
+        controlsOverlay = findViewById(R.id.controlsOverlay);
+        View previewSafe = findViewById(R.id.previewOverlay);
+        View showControls = findViewById(R.id.showControlsButton);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            v.setPadding(
-                    basePadding,
-                    basePadding + insets.getSystemWindowInsetTop(),
-                    basePadding,
-                    basePadding + insets.getSystemWindowInsetBottom());
+            int top = insets.getSystemWindowInsetTop();
+            int bottom = insets.getSystemWindowInsetBottom();
+            controlsOverlay.setPadding(0, top, 0, bottom);
+            previewSafe.setPadding(0, top, 0, bottom);
+            android.widget.FrameLayout.LayoutParams lp = (android.widget.FrameLayout.LayoutParams) showControls.getLayoutParams();
+            lp.topMargin = top + (int) (10 * getResources().getDisplayMetrics().density + 0.5f);
+            lp.rightMargin = (int) (10 * getResources().getDisplayMetrics().density + 0.5f);
+            showControls.setLayoutParams(lp);
             return insets;
         });
         root.requestApplyInsets();
@@ -105,6 +112,13 @@ public class MainActivity extends Activity {
         advancedPanel = findViewById(R.id.advancedPanel);
         shutterButton = findViewById(R.id.shutterButton);
         cameraIpEdit = findViewById(R.id.cameraIpEdit);
+        topStack = findViewById(R.id.topStack);
+        bottomStack = findViewById(R.id.bottomStack);
+        connectionPanel = findViewById(R.id.connectionPanel);
+        quickControlsBar = findViewById(R.id.quickControlsBar);
+        selfieSettingsPanel = findViewById(R.id.selfieSettingsPanel);
+        galleryPanel = findViewById(R.id.galleryPanel);
+        selfieSummaryText = findViewById(R.id.selfieSummaryText);
 
         modeSpinner = findViewById(R.id.modeSpinner);
         shutterSpinner = findViewById(R.id.shutterSpinner);
@@ -133,13 +147,20 @@ public class MainActivity extends Activity {
         setSpinner(evSpinner, Arrays.asList("—"));
 
         findViewById(R.id.connectButton).setOnClickListener(v -> connect());
+        findViewById(R.id.connectionToggleButton).setOnClickListener(v ->
+                connectionPanel.setVisibility(connectionPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
         findViewById(R.id.rotateButton).setOnClickListener(v -> liveView.rotate90());
+        ((ToggleButton) findViewById(R.id.fillButton)).setOnCheckedChangeListener((b1, c) -> liveView.setFill(c));
         ((ToggleButton) findViewById(R.id.mirrorButton)).setOnCheckedChangeListener((b1, c) -> liveView.setMirror(c));
         ((ToggleButton) findViewById(R.id.gridButton)).setOnCheckedChangeListener((b1, c) -> liveView.setGrid(c));
         ((ToggleButton) findViewById(R.id.histButton)).setOnCheckedChangeListener((b1, c) -> liveView.setHistogram(c));
         ((ToggleButton) findViewById(R.id.zebraButton)).setOnCheckedChangeListener((b1, c) -> liveView.setZebra(c));
         ((ToggleButton) findViewById(R.id.advancedToggle)).setOnCheckedChangeListener((b1, c) ->
                 advancedPanel.setVisibility(c ? View.VISIBLE : View.GONE));
+        findViewById(R.id.selfieSettingsToggleButton).setOnClickListener(v ->
+                selfieSettingsPanel.setVisibility(selfieSettingsPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        findViewById(R.id.hideControlsButton).setOnClickListener(v -> setControlsVisible(false));
+        findViewById(R.id.showControlsButton).setOnClickListener(v -> setControlsVisible(true));
 
         findViewById(R.id.focusButton).setOnClickListener(v -> focusOnce());
         shutterButton.setOnClickListener(v -> {
@@ -156,6 +177,32 @@ public class MainActivity extends Activity {
         liveView.setTapListener((x, y) -> tapFocus(x, y));
 
         installSpinnerHandlers();
+        installSelfieSummaryHandlers();
+        updateSelfieSummary();
+    }
+
+    private void setControlsVisible(boolean visible) {
+        topStack.setVisibility(visible ? View.VISIBLE : View.GONE);
+        bottomStack.setVisibility(visible ? View.VISIBLE : View.GONE);
+        findViewById(R.id.showControlsButton).setVisibility(visible ? View.GONE : View.VISIBLE);
+    }
+
+    private void installSelfieSummaryHandlers() {
+        timerSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
+        burstSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
+        intervalSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
+        previewSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
+    }
+
+    private void updateSelfieSummary() {
+        if (selfieSummaryText == null) return;
+        String timer = selectedDelaySeconds() + "秒";
+        String shots = selectedShotCount() + "张";
+        long interval = selectedIntervalMs();
+        String gap = interval == 500 ? "0.5秒" : (interval / 1000) + "秒";
+        long preview = selectedPreviewMs();
+        String review = preview < 0 ? "直到点击" : (preview / 1000) + "秒";
+        selfieSummaryText.setText(timer + " · " + shots + " · 间隔" + gap + " · 回看" + review);
     }
 
     private Network bindProcessToWifi() {
@@ -305,7 +352,10 @@ public class MainActivity extends Activity {
                 final String endpoint = connectedEndpoint;
                 final String label = endpointLabel(endpoint);
                 connected = true;
-                ui.post(() -> cameraIpEdit.setText(label));
+                ui.post(() -> {
+                    cameraIpEdit.setText(label);
+                    connectionPanel.setVisibility(View.GONE);
+                });
                 loadControls();
                 String url = api.startLiveview();
                 startLiveThread(url);
@@ -678,12 +728,13 @@ public class MainActivity extends Activity {
             }
         });
         galleryStrip.addView(iv, 0);
+        galleryPanel.setVisibility(View.VISIBLE);
         while (galleryStrip.getChildCount() > 20) galleryStrip.removeViewAt(galleryStrip.getChildCount() - 1);
     }
 
     private void setSpinner(Spinner sp, List<String> values) {
-        ArrayAdapter<String> a = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values);
-        a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        ArrayAdapter<String> a = new ArrayAdapter<>(this, R.layout.spinner_item, values);
+        a.setDropDownViewResource(R.layout.spinner_dropdown_item);
         sp.setAdapter(a);
     }
 

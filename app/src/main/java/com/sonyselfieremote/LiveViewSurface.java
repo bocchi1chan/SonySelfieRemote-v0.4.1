@@ -15,7 +15,7 @@ public class LiveViewSurface extends View {
     public interface TapListener { void onTapPercent(double x, double y); }
     private Bitmap frame;
     private int rotation=0;
-    private boolean mirror=false, grid=false, histogram=false, zebra=false;
+    private boolean mirror=false, grid=false, histogram=false, zebra=false, fill=false;
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Matrix drawMatrix=new Matrix();
     private final Matrix inverseMatrix=new Matrix();
@@ -27,6 +27,7 @@ public class LiveViewSurface extends View {
     public void setFrame(Bitmap b){ frame=b; if(histogram && b!=null) buildHistogram(b); invalidate(); }
     public void rotate90(){ rotation=(rotation+90)%360; invalidate(); }
     public void setMirror(boolean b){ mirror=b; invalidate(); }
+    public void setFill(boolean b){ fill=b; invalidate(); }
     public void setGrid(boolean b){ grid=b; invalidate(); }
     public void setHistogram(boolean b){ histogram=b; if(b&&frame!=null)buildHistogram(frame); invalidate(); }
     public void setZebra(boolean b){ zebra=b; invalidate(); }
@@ -40,7 +41,7 @@ public class LiveViewSurface extends View {
         drawMatrix.postRotate(rotation);
         boolean swap=(rotation%180)!=0;
         float rw=swap?bh:bw, rh=swap?bw:bh;
-        float scale=Math.min(getWidth()/rw, getHeight()/rh);
+        float scale=fill ? Math.max(getWidth()/rw, getHeight()/rh) : Math.min(getWidth()/rw, getHeight()/rh);
         drawMatrix.postScale(scale,scale);
         drawMatrix.postTranslate(getWidth()/2f,getHeight()/2f);
         drawMatrix.invert(inverseMatrix);
