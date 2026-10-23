@@ -34,7 +34,6 @@ import android.widget.ToggleButton;
 import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -202,31 +201,47 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private String extractHost(String raw) {
-        if (raw == null) return null;
-        String v = raw.trim();
-        if (v.isEmpty() || v.equalsIgnoreCase("自动查找")) return null;
-        try {
-            if (v.startsWith("http://") || v.startsWith("https://")) {
-                return new URL(v).getHost();
-            }
-        } catch (Exception ignored) {}
-        // 允许输入 192.168.122.1:10000
-        int colon = v.indexOf(':');
-        if (colon > 0) v = v.substring(0, colon);
-        return v;
+    private List<String> cameraHostCandidates() {
+        LinkedHashSet<String> hosts = new LinkedHashSet<>();
+        SonyEndpointDiscovery.ParsedInput manual = SonyEndpointDiscovery.parseUserInput(cameraIpEdit.getText().toString());
+        if (manual != null && manual.host != null) {
+            // When the user explicitly enters an IP/host, do NOT silently jump to a
+            // different host. We only probe the possible Sony API ports on that host.
+            hosts.add(manual.host);
+            return new ArrayList<>(hosts);
+        }
+
+        String gateway = getWifiGatewayIp();
+        if (gateway != null) hosts.add(gateway);
+        hosts.add("192.168.122.1");
+        hosts.add("192.168.0.1");
+        hosts.add("10.0.0.1");
+        return new ArrayList<>(hosts);
     }
 
-    private List<String> connectionCandidates() {
-        LinkedHashSet<String> ips = new LinkedHashSet<>();
-        String manual = extractHost(cameraIpEdit.getText().toString());
-        if (manual != null) ips.add(manual);
-        String gateway = getWifiGatewayIp();
-        if (gateway != null) ips.add(gateway);
-        // A7R II / PlayMemories Smart Remote 常见地址。
-        ips.add("192.168.122.1");
-        ips.add("10.0.0.1");
-        return new ArrayList<>(ips);
+    private List<String> endpointCandidates() {
+        LinkedHashSet<String> endpoints = new LinkedHashSet<>();
+        SonyEndpointDiscovery.ParsedInput manual = SonyEndpointDiscovery.parseUserInput(cameraIpEdit.getText().toString());
+
+        if (manual != null && manual.host != null) {
+            endpoints.addAll(SonyEndpointDiscovery.buildEndpoints(manual.host, manual.port, manual.exactEndpoint));
+            return new ArrayList<>(endpoints);
+        }
+
+        for (String host : cameraHostCandidates()) {
+            endpoints.addAll(SonyEndpointDiscovery.buildEndpoints(host, null, null));
+        }
+        return new ArrayList<>(endpoints);
+    }
+
+    private static String endpointLabel(String endpoint) {
+        try {
+            java.net.URI uri = java.net.URI.create(endpoint);
+            int p = uri.getPort();
+            return uri.getHost() + (p > 0 ? ":" + p : "");
+        } catch (Exception e) {
+            return endpoint;
+        }
     }
 
     private void connect() {
@@ -235,54 +250,74 @@ public class MainActivity extends Activity {
             return;
         }
         if (bindProcessToWifi() == null) {
-            status("没有检测到 Wi‑Fi。请先连接 A7R II 的 Wi‑Fi。");
+            status("没有检测到 Wi‑Fi。请先连接 A7R II 的 Wi‑Fi。 ");
             return;
         }
 
         liveProgress.setVisibility(View.VISIBLE);
-        status("正在自动查找 A7R II…");
+        status("正在查找 A7R II 的 Camera Remote API…");
         io.execute(() -> {
-            Exception lastError = null;
-            String successIp = null;
+            SonyCameraApi connectedApi = null;
+            String connectedEndpoint = null;
+            List<String> errors = new ArrayList<>();
             try {
-                for (String ip : connectionCandidates()) {
-                    if (ip == null || ip.isEmpty()) continue;
-                    final String tryIp = ip;
-                    status("正在尝试 " + tryIp + "…");
+                List<String> endpoints = endpointCandidates();
+                for (String endpoint : endpoints) {
+                    if (endpoint == null || endpoint.isEmpty()) continue;
+                    final String tryEndpoint = endpoint;
+                    status("正在尝试 " + endpointLabel(tryEndpoint) + "…");
                     try {
-                        SonyCameraApi candidate = new SonyCameraApi("http://" + tryIp + ":10000/sony/camera");
+                        SonyCameraApi candidate = new SonyCameraApi(tryEndpoint);
                         Set<String> caps = candidate.refreshAvailableApis();
-                        api = candidate;
-                        api.startRecModeIfPossible();
-                        caps = api.refreshAvailableApis();
-                        api.setPostview2MIfPossible();
-                        if (!api.supports("startLiveview")) {
-                            throw new Exception("已找到相机，但未开放 startLiveview；请在机身启动 Smart Remote Control。可用API=" + caps);
+
+                        // A7R II / A7 II-era Smart Remote Embedded initially exposes
+                        // startRecMode. Calling it transitions the camera into Remote
+                        // Shooting and makes startLiveview / actTakePicture available.
+                        candidate.startRecModeIfPossible();
+                        caps = candidate.refreshAvailableApis();
+                        candidate.setPostview2MIfPossible();
+
+                        if (!candidate.supports("startLiveview")) {
+                            throw new Exception("API可达，但 startLiveview 未开放；可用API=" + caps);
                         }
-                        successIp = tryIp;
+
+                        connectedApi = candidate;
+                        connectedEndpoint = tryEndpoint;
                         break;
                     } catch (Exception e) {
-                        lastError = e;
-                        api = null;
+                        String msg = e.getMessage();
+                        if (msg == null || msg.isEmpty()) msg = e.getClass().getSimpleName();
+                        errors.add(endpointLabel(tryEndpoint) + " → " + msg);
                     }
                 }
 
-                if (api == null || successIp == null) {
-                    throw lastError != null ? lastError : new Exception("没有找到相机");
+                if (connectedApi == null || connectedEndpoint == null) {
+                    StringBuilder sb = new StringBuilder();
+                    int from = Math.max(0, errors.size() - 4);
+                    for (int i = from; i < errors.size(); i++) {
+                        if (sb.length() > 0) sb.append(" | ");
+                        sb.append(errors.get(i));
+                    }
+                    throw new Exception(sb.length() > 0 ? sb.toString() : "没有发现 Camera Remote API");
                 }
 
-                final String connectedIp = successIp;
+                api = connectedApi;
+                final String endpoint = connectedEndpoint;
+                final String label = endpointLabel(endpoint);
                 connected = true;
-                ui.post(() -> cameraIpEdit.setText(connectedIp));
+                ui.post(() -> cameraIpEdit.setText(label));
                 loadControls();
                 String url = api.startLiveview();
                 startLiveThread(url);
-                status("已连接到 " + connectedIp + " · 自拍默认：15秒 / 3张 / 1秒间隔 / 回看5秒");
+                status("已连接到 " + label + " · 自拍默认：15秒 / 3张 / 1秒间隔 / 回看5秒");
             } catch (Exception e) {
+                String manual = cameraIpEdit.getText().toString().trim();
                 String hint = "连接失败：" + e.getMessage()
-                        + "。请确认手机已连接相机 Wi‑Fi；也可手填 192.168.122.1 后重试。";
+                        + "。A7R II 常用端点是 192.168.122.1:8080。请确认机身已进入 Applications → Smart Remote Embedded，并停留在等待手机连接/遥控画面。";
+                if (!manual.isEmpty()) hint += " 当前输入：" + manual;
                 status(hint);
                 connected = false;
+                api = null;
             }
             ui.post(() -> liveProgress.setVisibility(View.GONE));
         });
