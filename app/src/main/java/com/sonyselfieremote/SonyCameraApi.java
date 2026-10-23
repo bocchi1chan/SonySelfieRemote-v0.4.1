@@ -27,11 +27,15 @@ public class SonyCameraApi {
     public SonyCameraApi(String endpoint) { this.endpoint = endpoint; }
 
     public JSONObject call(String method, JSONArray params) throws Exception {
+        return call(method, params, "1.0");
+    }
+
+    public JSONObject call(String method, JSONArray params, String version) throws Exception {
         JSONObject body = new JSONObject();
         body.put("method", method);
         body.put("params", params == null ? new JSONArray() : params);
         body.put("id", ids.getAndIncrement());
-        body.put("version", "1.0");
+        body.put("version", version == null ? "1.0" : version);
 
         HttpURLConnection c = (HttpURLConnection) new URL(endpoint).openConnection();
         c.setConnectTimeout(2200);
@@ -123,6 +127,91 @@ public class SonyCameraApi {
         if (r.length() < 4) throw new CameraException("Unexpected exposure compensation response: " + r);
         // Sony API order: current, upper, lower, step.
         return new int[]{r.getInt(0), r.getInt(1), r.getInt(2), r.getInt(3)};
+    }
+
+
+    public void setContinuousMode(String mode) throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("contShootingMode", mode);
+        call("setContShootingMode", new JSONArray().put(o));
+    }
+
+    public void setContinuousSpeed(String speed) throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("contShootingSpeed", speed);
+        call("setContShootingSpeed", new JSONArray().put(o));
+    }
+
+    public void prepareContinuousShootingIfPossible() throws Exception {
+        if (supports("setContShootingMode")) {
+            Exception last = null;
+            try {
+                setContinuousMode("Spd Priority Cont.");
+                Thread.sleep(180);
+            } catch (Exception e) {
+                last = e;
+                try {
+                    setContinuousMode("Continuous");
+                    Thread.sleep(180);
+                    last = null;
+                } catch (Exception ignored) {}
+            }
+            if (last != null) throw last;
+            refreshAvailableApis();
+        }
+        if (supports("setContShootingSpeed")) {
+            try {
+                setContinuousSpeed("Hi");
+                Thread.sleep(120);
+                refreshAvailableApis();
+            } catch (Exception ignored) {}
+        }
+        if (!supports("startContShooting") || !supports("stopContShooting")) {
+            throw new CameraException("机身当前没有开放 startContShooting / stopContShooting");
+        }
+    }
+
+    public void startContinuousShooting() throws Exception {
+        call("startContShooting", new JSONArray());
+    }
+
+    public void stopContinuousShooting() throws Exception {
+        call("stopContShooting", new JSONArray());
+    }
+
+    /**
+     * Polls getEvent v1.2 immediately and extracts any continuous-shooting postview URLs.
+     * Some older camera/app combinations do not expose this event version; callers should
+     * treat an exception as "live shot count unavailable" and use a timed fallback.
+     */
+    public List<String> getContinuousPostviewUrls() throws Exception {
+        JSONObject out = call("getEvent", new JSONArray().put(false), "1.2");
+        List<String> urls = new ArrayList<>();
+        collectContinuousUrls(out.opt("result"), urls);
+        return urls;
+    }
+
+    private static void collectContinuousUrls(Object node, List<String> out) throws Exception {
+        if (node instanceof JSONObject) {
+            JSONObject o = (JSONObject) node;
+            if ("contShooting".equals(o.optString("type"))) {
+                JSONArray a = o.optJSONArray("contShootingUrl");
+                if (a != null) {
+                    for (int i = 0; i < a.length(); i++) {
+                        JSONObject item = a.optJSONObject(i);
+                        if (item != null) {
+                            String u = item.optString("postviewUrl", "");
+                            if (!u.isEmpty() && !out.contains(u)) out.add(u);
+                        }
+                    }
+                }
+            }
+            java.util.Iterator<String> keys = o.keys();
+            while (keys.hasNext()) collectContinuousUrls(o.opt(keys.next()), out);
+        } else if (node instanceof JSONArray) {
+            JSONArray a = (JSONArray) node;
+            for (int i = 0; i < a.length(); i++) collectContinuousUrls(a.opt(i), out);
+        }
     }
 
     public void setExposureMode(String v) throws Exception { call("setExposureMode", new JSONArray().put(v)); }

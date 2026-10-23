@@ -316,14 +316,22 @@
                         android:background="@drawable/floating_input"
                         android:popupBackground="#F0191D24" />
 
-                    <Spinner
-                        android:id="@+id/burstSpinner"
+                    <EditText
+                        android:id="@+id/shotCountEdit"
                         android:layout_width="0dp"
                         android:layout_height="46dp"
                         android:layout_marginStart="6dp"
                         android:layout_weight="1"
                         android:background="@drawable/floating_input"
-                        android:popupBackground="#F0191D24" />
+                        android:gravity="center"
+                        android:hint="张数 1-1000"
+                        android:inputType="number"
+                        android:maxLength="4"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:selectAllOnFocus="true"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#B3FFFFFF" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -348,6 +356,38 @@
                         android:layout_weight="1"
                         android:background="@drawable/floating_input"
                         android:popupBackground="#F0191D24" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ToggleButton
+                        android:id="@+id/highSpeedToggle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="44dp"
+                        android:background="@drawable/floating_toggle"
+                        android:enabled="false"
+                        android:minHeight="0dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:textOff="高速连拍（实验）关"
+                        android:textOn="高速连拍（实验）开"
+                        android:textColor="#FFFFFF" />
+
+                    <TextView
+                        android:id="@+id/highSpeedStatusText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:text="连接后检测机身高速接口"
+                        android:textColor="#D9FFFFFF"
+                        android:textSize="11sp" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -395,7 +435,7 @@
                 android:gravity="center"
                 android:paddingTop="6dp"
                 android:paddingBottom="6dp"
-                android:text="15秒 · 3张 · 间隔1秒 · 回看5秒"
+                android:text="15秒 · 3张 · 普通 · 间隔1秒 · 回看5秒"
                 android:textColor="#FFFFFF"
                 android:textSize="13sp" />
 

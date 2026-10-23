@@ -1,35 +1,14 @@
-# SonySelfieRemote v0.4.3 — Fullscreen Selfie Monitor
+# SonySelfieRemote v0.4.4
 
-面向 Sony A7R II 三脚架自拍场景的全屏监视器版本。连接逻辑沿用已在 A7R II 上实机成功的 v0.4.2（优先 `192.168.122.1:8080`）。
+Selfie-monitor build for Sony A7R II.
 
-## v0.4.3 UI 重构
+## New in v0.4.4
+- Normal multi-shot count is now an editable **1–1000** value. Normal mode uses the already-tested `actTakePicture` path, so the requested count is exact.
+- For very large groups, the camera still captures the full requested count, but the phone downloads only the **latest 6 postview JPEGs** for quick pose review.
+- Added **High-speed continuous shooting (Experimental)** toggle. It is enabled only when the connected camera appears to expose continuous-shooting capability.
+- Experimental mode attempts `setContShootingMode` / `setContShootingSpeed` and then `startContShooting` / `stopContShooting`.
+- If `getEvent` v1.2 reports continuous-shooting postviews, the app uses the reported count. If not, A7R II's nominal ~5 fps timing is used, so experimental-mode shot count can be approximate after the buffer fills.
+- If the high-speed API fails, the app automatically falls back to normal multi-shot mode.
+- Fixed a duplicate MediaStore JPEG write in the prior source.
 
-- 实时取景改为全屏底层，尽量利用整个手机屏幕。
-- 状态栏与导航栏只约束悬浮控件，不再缩小取景画面。
-- 所有主要按钮改为半透明悬浮样式。
-- 连接面板在连接成功后自动收起，可点顶部“连接”重新打开。
-- “自拍设置”改为底部半透明抽屉，默认收起。
-- 自拍参数保持：倒计时 / 张数 / 张间隔 / 拍后回看时间。
-- 底部常驻显示当前自拍摘要，例如 `15秒 · 3张 · 间隔1秒 · 回看5秒`。
-- 最近照片缩略图只有拍到照片后才出现，不再长期占屏幕高度。
-- 新增“隐藏”按钮：隐藏全部主要控件，留下纯取景；右上角“显示控件”可恢复。
-- 新增“完整画面 / 铺满画面”：
-  - 完整画面：显示全部取景，不裁切。
-  - 铺满画面：放大填满屏幕，可能裁掉少量边缘。
-- 修复旧版自拍设置控件看起来被隐藏/文字难以看清的问题，Spinner 改为深色半透明样式。
-
-## 默认自拍流程
-
-`实时取景 → 15秒倒计时 → 拍3张 → 每张间隔1秒 → 全部拍完后回传预览 → 显示5秒 → 自动回到实时取景`
-
-## A7R II 连接
-
-1. 相机进入 **Applications → Smart Remote Embedded**。
-2. 手机连接相机 Wi‑Fi。
-3. 打开 App。
-4. 可留空自动发现；若需要手填，使用 `192.168.122.1:8080`。
-5. 连接成功后连接面板会自动收起。
-
-## GitHub Actions 编译 APK
-
-仓库已带 `.github/workflows/android.yml`。推送到 GitHub 后会自动编译，成功后在 Actions 对应任务底部下载 `SonySelfieRemote-v0.4.3-debug`。
+Default selfie workflow remains 15 s delay / 3 shots / 1 s interval / 5 s review.

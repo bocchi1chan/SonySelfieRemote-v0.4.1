@@ -27,6 +27,8 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.Spinner;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
@@ -61,7 +63,10 @@ public class MainActivity extends Activity {
     private TextView selfieSummaryText;
     private Network boundWifiNetwork;
     private Spinner modeSpinner, shutterSpinner, apertureSpinner, isoSpinner, evSpinner;
-    private Spinner timerSpinner, burstSpinner, intervalSpinner, previewSpinner;
+    private Spinner timerSpinner, intervalSpinner, previewSpinner;
+    private EditText shotCountEdit;
+    private ToggleButton highSpeedToggle;
+    private TextView highSpeedStatusText;
 
     private volatile boolean connected = false;
     private volatile boolean captureBusy = false;
@@ -126,17 +131,18 @@ public class MainActivity extends Activity {
         isoSpinner = findViewById(R.id.isoSpinner);
         evSpinner = findViewById(R.id.evSpinner);
         timerSpinner = findViewById(R.id.timerSpinner);
-        burstSpinner = findViewById(R.id.burstSpinner);
+        shotCountEdit = findViewById(R.id.shotCountEdit);
         intervalSpinner = findViewById(R.id.intervalSpinner);
         previewSpinner = findViewById(R.id.previewSpinner);
+        highSpeedToggle = findViewById(R.id.highSpeedToggle);
+        highSpeedStatusText = findViewById(R.id.highSpeedStatusText);
 
         setSpinner(timerSpinner, Arrays.asList(
                 "倒计时 0秒", "倒计时 5秒", "倒计时 10秒", "倒计时 15秒", "倒计时 20秒", "倒计时 30秒"));
-        setSpinner(burstSpinner, Arrays.asList("拍 1张", "拍 2张", "拍 3张"));
+        shotCountEdit.setText("3");
         setSpinner(intervalSpinner, Arrays.asList("间隔 0.5秒", "间隔 1秒", "间隔 2秒"));
         setSpinner(previewSpinner, Arrays.asList("回看 1秒", "回看 3秒", "回看 5秒", "回看 10秒", "回看直到点击"));
         timerSpinner.setSelection(3);       // 15 seconds
-        burstSpinner.setSelection(2);       // 3 shots
         intervalSpinner.setSelection(1);    // 1 second
         previewSpinner.setSelection(2);     // 5 seconds
 
@@ -176,6 +182,14 @@ public class MainActivity extends Activity {
         previewMain.setOnClickListener(v -> hideGroupPreview());
         liveView.setTapListener((x, y) -> tapFocus(x, y));
 
+        highSpeedToggle.setEnabled(false);
+        highSpeedToggle.setOnCheckedChangeListener((button, checked) -> updateSelfieSummary());
+        shotCountEdit.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { updateSelfieSummary(); }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+
         installSpinnerHandlers();
         installSelfieSummaryHandlers();
         updateSelfieSummary();
@@ -189,7 +203,6 @@ public class MainActivity extends Activity {
 
     private void installSelfieSummaryHandlers() {
         timerSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
-        burstSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
         intervalSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
         previewSpinner.setOnItemSelectedListener(new SimpleItemSelected(pos -> updateSelfieSummary()));
     }
@@ -202,7 +215,8 @@ public class MainActivity extends Activity {
         String gap = interval == 500 ? "0.5秒" : (interval / 1000) + "秒";
         long preview = selectedPreviewMs();
         String review = preview < 0 ? "直到点击" : (preview / 1000) + "秒";
-        selfieSummaryText.setText(timer + " · " + shots + " · 间隔" + gap + " · 回看" + review);
+        String mode = highSpeedToggle != null && highSpeedToggle.isChecked() ? "高速实验" : "普通";
+        selfieSummaryText.setText(timer + " · " + shots + " · " + mode + " · 间隔" + gap + " · 回看" + review);
     }
 
     private Network bindProcessToWifi() {
@@ -352,6 +366,7 @@ public class MainActivity extends Activity {
                 final String endpoint = connectedEndpoint;
                 final String label = endpointLabel(endpoint);
                 connected = true;
+                updateHighSpeedCapability();
                 ui.post(() -> {
                     cameraIpEdit.setText(label);
                     connectionPanel.setVisibility(View.GONE);
@@ -539,7 +554,9 @@ public class MainActivity extends Activity {
     }
 
     private int selectedShotCount() {
-        return new int[]{1, 2, 3}[burstSpinner.getSelectedItemPosition()];
+        int n = 3;
+        try { n = Integer.parseInt(shotCountEdit.getText().toString().trim()); } catch (Exception ignored) {}
+        return Math.max(1, Math.min(1000, n));
     }
 
     private long selectedIntervalMs() {
@@ -548,6 +565,21 @@ public class MainActivity extends Activity {
 
     private long selectedPreviewMs() {
         return new long[]{1000, 3000, 5000, 10000, -1}[previewSpinner.getSelectedItemPosition()];
+    }
+
+    private void updateHighSpeedCapability() {
+        if (api == null) return;
+        boolean direct = api.supports("startContShooting") && api.supports("stopContShooting");
+        boolean configurable = api.supports("setContShootingMode");
+        boolean possible = direct || configurable;
+        ui.post(() -> {
+            highSpeedToggle.setEnabled(possible);
+            if (!possible) highSpeedToggle.setChecked(false);
+            highSpeedStatusText.setText(possible
+                    ? (direct ? "已检测到高速连拍接口，可勾选测试" : "检测到连续拍摄设置接口，可勾选尝试激活高速API")
+                    : "当前机身/Smart Remote 未开放高速连拍接口，将使用普通多张");
+            updateSelfieSummary();
+        });
     }
 
     private void startCaptureSequence() {
@@ -561,6 +593,8 @@ public class MainActivity extends Activity {
         final int count = selectedShotCount();
         final long intervalMs = selectedIntervalMs();
         final long previewMs = selectedPreviewMs();
+        final boolean requestHighSpeed = highSpeedToggle.isChecked();
+        ui.post(() -> shotCountEdit.setText(String.valueOf(count)));
 
         captureBusy = true;
         cancelRequested = false;
@@ -578,39 +612,40 @@ public class MainActivity extends Activity {
                 }
                 ui.post(() -> countdownText.setText(""));
 
-                List<String> postviewUrls = new ArrayList<>();
-                for (int i = 0; i < count; i++) {
-                    if (cancelRequested) throw new InterruptedException("已取消");
-                    final int shotNumber = i + 1;
-                    status("正在拍摄 " + shotNumber + "/" + count);
-                    String post = api.takePicture();
-                    if (post != null && !post.isEmpty()) postviewUrls.add(post);
-                    if (i < count - 1) {
-                        long slept = 0;
-                        while (slept < intervalMs) {
-                            if (cancelRequested) throw new InterruptedException("已取消");
-                            long chunk = Math.min(100, intervalMs - slept);
-                            Thread.sleep(chunk);
-                            slept += chunk;
-                        }
+                List<String> postviewUrls;
+                if (requestHighSpeed) {
+                    try {
+                        postviewUrls = captureHighSpeedExperimental(count);
+                    } catch (InterruptedException e) {
+                        throw e;
+                    } catch (Exception highSpeedError) {
+                        status("高速连拍实验不可用，自动回退普通模式：" + highSpeedError.getMessage());
+                        ui.post(() -> {
+                            highSpeedToggle.setChecked(false);
+                            highSpeedStatusText.setText("本次高速实验失败，已回退普通多张；可重新连接后再测试");
+                        });
+                        postviewUrls = captureNormalSequence(count, intervalMs);
                     }
+                } else {
+                    postviewUrls = captureNormalSequence(count, intervalMs);
                 }
 
                 if (cancelRequested) throw new InterruptedException("已取消");
                 List<CapturedImage> group = new ArrayList<>();
                 for (int i = 0; i < postviewUrls.size(); i++) {
-                    status("正在回传预览 " + (i + 1) + "/" + postviewUrls.size());
+                    status("正在回传最近预览 " + (i + 1) + "/" + postviewUrls.size());
                     CapturedImage image = downloadAndSavePostview(postviewUrls.get(i));
                     if (image != null) group.add(image);
                 }
 
                 if (!group.isEmpty()) {
-                    status("拍摄完成 · 正在检查刚拍的照片");
+                    status("拍摄完成 · 显示最近 " + group.size() + " 张");
                     ui.post(() -> showGroupPreview(group, previewMs));
                 } else {
-                    status("拍摄完成，但相机没有返回可显示的预览图");
+                    status("拍摄完成；本轮没有取得可显示的Postview预览");
                 }
             } catch (InterruptedException e) {
+                try { if (api != null && api.supports("stopContShooting")) api.stopContinuousShooting(); } catch (Exception ignored) {}
                 status("本轮自拍已取消");
                 ui.post(() -> countdownText.setText(""));
             } catch (Exception e) {
@@ -622,6 +657,103 @@ public class MainActivity extends Activity {
                 ui.post(() -> shutterButton.setText("开始自拍"));
             }
         });
+    }
+
+    /** Normal mode: exact requested count, using the already-tested actTakePicture path. */
+    private List<String> captureNormalSequence(int count, long intervalMs) throws Exception {
+        java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+        for (int i = 0; i < count; i++) {
+            if (cancelRequested) throw new InterruptedException("已取消");
+            final int shotNumber = i + 1;
+            status("普通多张 " + shotNumber + "/" + count);
+            String post = api.takePicture();
+            rememberRecentPostview(recent, post, 6);
+            if (i < count - 1) sleepCancelable(intervalMs);
+        }
+        return new ArrayList<>(recent);
+    }
+
+    /**
+     * Experimental native continuous shooting. If getEvent v1.2 reports each continuous-shot
+     * postview, we use that count to stop close to the requested target. If the camera does not
+     * report live URLs, we fall back to A7R II's nominal 5 fps timing, so the final count is only
+     * approximate (especially after the camera buffer fills).
+     */
+    private List<String> captureHighSpeedExperimental(int targetCount) throws Exception {
+        status("正在准备高速连拍实验…");
+        api.prepareContinuousShootingIfPossible();
+        api.refreshAvailableApis();
+        if (!api.supports("startContShooting") || !api.supports("stopContShooting")) {
+            throw new Exception("startContShooting/stopContShooting 未开放");
+        }
+
+        final long nominalMs = Math.max(220L, (long) Math.ceil(targetCount * 1000.0 / 5.0));
+        final long start = System.currentTimeMillis();
+        final long hardLimit = Math.max(3000L, nominalMs + 3000L);
+        java.util.LinkedHashSet<String> allUrls = new java.util.LinkedHashSet<>();
+        boolean liveCountingWorks = false;
+        boolean started = false;
+        try {
+            api.startContinuousShooting();
+            started = true;
+            status("高速连拍实验进行中 · 目标 " + targetCount + " 张");
+
+            while (!cancelRequested) {
+                long elapsed = System.currentTimeMillis() - start;
+                try {
+                    List<String> eventUrls = api.getContinuousPostviewUrls();
+                    if (!eventUrls.isEmpty()) {
+                        liveCountingWorks = true;
+                        allUrls.addAll(eventUrls);
+                        status("高速连拍实验 · 已报告 " + allUrls.size() + "/" + targetCount + " 张");
+                        if (allUrls.size() >= targetCount) break;
+                    }
+                } catch (Exception ignored) {
+                    // Older Smart Remote builds may not expose getEvent v1.2 continuous URLs.
+                }
+
+                if (!liveCountingWorks && elapsed >= nominalMs) break;
+                if (elapsed >= hardLimit && liveCountingWorks) break;
+                Thread.sleep(80);
+            }
+        } finally {
+            if (started) {
+                try { api.stopContinuousShooting(); } catch (Exception ignored) {}
+            }
+        }
+        if (cancelRequested) throw new InterruptedException("已取消");
+
+        // Give the camera a moment to move from StillCapturing -> StillSaving, then collect
+        // final event URLs when supported. Only the newest six are downloaded for review.
+        Thread.sleep(350);
+        for (int i = 0; i < 4; i++) {
+            try { allUrls.addAll(api.getContinuousPostviewUrls()); } catch (Exception ignored) { break; }
+            Thread.sleep(120);
+        }
+
+        java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+        for (String u : allUrls) rememberRecentPostview(recent, u, 6);
+        if (!liveCountingWorks) {
+            status("高速连拍已停止 · 当前机身未报告实时张数，目标张数按约5fps估算，实际张数可能不同");
+        }
+        return new ArrayList<>(recent);
+    }
+
+    private static void rememberRecentPostview(java.util.ArrayDeque<String> recent, String url, int max) {
+        if (url == null || url.isEmpty()) return;
+        recent.remove(url);
+        recent.addLast(url);
+        while (recent.size() > max) recent.removeFirst();
+    }
+
+    private void sleepCancelable(long ms) throws InterruptedException {
+        long slept = 0;
+        while (slept < ms) {
+            if (cancelRequested) throw new InterruptedException("已取消");
+            long chunk = Math.min(100, ms - slept);
+            Thread.sleep(chunk);
+            slept += chunk;
+        }
     }
 
     private CapturedImage downloadAndSavePostview(String url) {
